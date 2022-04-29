@@ -163,6 +163,14 @@
                                  (rec (cons result acc) next-stream)))))
                   (rec nil stream)))))
 
+(defun repeated1 (parser)
+  (new-parser (lambda (stream)
+                (multiple-value-bind (result next-stream) 
+                    (apply-parser (repeated parser) stream)
+                  (if (or (eq result *failure*) (null result))
+                      *failure*
+                      (values result next-stream))))))
+
 (defun sep-by (value-parser sep-parser)
   (let ((sep-parser (mdo (_ sep-parser)
                          (v value-parser)
@@ -204,6 +212,19 @@
                       (values nil stream)
                       (values (list result) next-stream))))))
 
+(defun repeat-n (predicate n)
+  (new-parser (lambda (stream)
+                (labels ((rec (acc i cur-stream)
+                           (if (= i 0)
+                               (values (reverse acc) cur-stream)
+                               (etypecase cur-stream
+                                 (lazy-nil *failure*)
+                                 (lazy-list 
+                                  (if (funcall predicate (head cur-stream))
+                                      (rec (cons (head cur-stream) acc) (- i 1) (tail cur-stream))
+                                      *failure*))))))
+                  (rec nil n stream)))))
+
 (defun digits-to-int (digits)
   (loop for d in digits
      for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
@@ -217,7 +238,12 @@
                                         (rest (many #'digit-char-p))
                                         (yield (cons fst rest)))))
 
+(defparameter *non-negative-int* (orp (mdo (_ (char1 #\0)) (yield 0)) *positive-int*))
+
 (defun row () (sep-by *positive-int* (char1 #\,)))
+
+(defun csv ()
+  (sep-by (row) (one (lambda (c) (char= c #\newline)))))
 
 (defun json ()
   (mdo (_ (ignore-whitespace))
@@ -236,9 +262,39 @@
 (defun json-null ()
   (mdo (_ (seq "null")) (yield nil)))
 
+(defun hexp (c)
+  (let ((code (char-code c)))
+    (or (<= 48 code 57)
+        (<= 65 code 70)
+        (<= 97 code 102))))
+
+(defun unicode-char ()
+  (mdo (_ (char1 #\\))
+       (_ (char1 #\u))
+       (cs (repeat-n #'hexp 4))
+       (yield (cons #\\ (cons #\u cs)))))
+
+(defun escaped-character ()
+  (orp 
+   (unicode-char)
+   (mdo (_ (char1 #\\))
+        (c (orp (char1 #\")
+                (char1 #\\)
+                (char1 #\/)
+                (mdo (_ (char1 #\b)) (yield #\backspace))
+                (mdo (_ (char1 #\f)) (yield #\formfeed))
+                (mdo (_ (char1 #\n)) (yield #\newline))
+                (mdo (_ (char1 #\r)) (yield #\return))
+                (mdo (_ (char1 #\t)) (yield #\tab))))
+        (yield (list c)))))
+
 (defun json-string ()
   (mdo (_ (char1 #\"))
-       (cs (many (lambda (c) (and (not (newlinep c)) (not (char= c #\"))))))
+       (cs (fmap (lambda (ls) (apply #'append ls))
+                 (repeated (orp (many1 (lambda (c) 
+                                        (and (not (char= c #\\))
+                                             (not (char= c #\")))))
+                                (escaped-character)))))
        (_ (char1 #\"))
        (yield (coerce cs 'string))))
 
@@ -251,6 +307,11 @@
        (_ (ignore-whitespace))
        (yield (cons key value))))
 
+(defun alist-to-hash-table (alist)
+  (let ((table (make-hash-table :test 'equal)))
+    (mapc (lambda (e) (setf (gethash (car e) table) (cdr e))) alist)
+    table))
+
 (defun json-object ()
   (mdo (_ (ignore-whitespace))
        (_ (char1 #\{))
@@ -258,7 +319,7 @@
        (es (sep-by (json-key-value) (char1 #\,)))
        (_ (ignore-whitespace))
        (_ (char1 #\}))
-       (yield es)))
+       (yield (alist-to-hash-table es))))
 
 (defun json-array ()
   (mdo (_ (char1 #\[))
@@ -271,16 +332,22 @@
        (ds (many1 #'digit-char-p))
        (yield (/ (digits-to-int ds) (expt 10 (length ds))))))
 
-;;(defun exponential-part)
+(defun exponent-part ()
+  (mdo (_ (orp (char1 #\e)
+               (char1 #\E)))
+       (op (orp (mdo (_ (char1 #\-)) (yield #'/))
+                (mdo (_ (char1 #\+)) (yield #'*))))
+       (ex *non-negative-int*)
+       (yield (lambda (n) (funcall op n (expt 10 ex))))))
 
 (defun json-number ()
   (mdo (negate (optional (char1 #\-)))
        (integral-part (orp (mdo (_ (char1 #\0)) (yield 0))
                            *positive-int*))
        (f (optional (fractional-part)))
+       (e (optional (exponent-part)))
        (let (n (if f (+ (car f) integral-part) integral-part)))
-       (yield (if negate (- n) n))))
+       (let (with-exp (if e (funcall (car e) n) n)))
+       (yield (if negate (- with-exp) with-exp))))
 
-(defun csv ()
-  (sep-by (row) (one (lambda (c) (char= c #\newline)))))
 
