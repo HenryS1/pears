@@ -10,27 +10,62 @@
 (defmacro lazy-cons (a tail)
   `(make-lazy-list :head ,a :tail (defer ,tail)))
 
-(defun head (lazy-list) (lazy-list-head lazy-list))
-(defun tail (lazy-list) 
-  (let ((evaluated (if (eq (type-of (lazy-list-tail lazy-list)) 'lazy-list)
-                       (lazy-list-tail lazy-list)
-                       (funcall (lazy-list-tail lazy-list)))))
-    (setf (lazy-list-tail lazy-list)
-          (make-lazy-list :head (lazy-list-head evaluated) :tail (lazy-list-tail evaluated)))))
+(defstruct lazy-nil)
+(defparameter *lazy-nil* (make-lazy-nil))
 
-(defun lazy-stream (stream) (lazy-cons (read-char stream nil nil) (lazy-stream stream)))
+(defstruct deferred-stream thunk)
+
+(defun head (lazy-list) 
+  (etypecase lazy-list
+    (lazy-nil nil)
+    (lazy-list (lazy-list-head lazy-list))))
+
+(defun tail (lazy-list) 
+  (etypecase lazy-list
+    (lazy-nil *lazy-nil*)
+    (lazy-list (let ((evaluated (etypecase (lazy-list-tail lazy-list)
+                        (lazy-list (lazy-list-tail lazy-list))
+                        (lazy-nil *lazy-nil*)
+                        (function (funcall (lazy-list-tail lazy-list))))))
+       (setf (lazy-list-tail lazy-list)
+             (etypecase evaluated
+               (lazy-list
+                (make-lazy-list :head (lazy-list-head evaluated) :tail (lazy-list-tail evaluated)))
+               (lazy-nil *lazy-nil*)))))))
+
+(defun lazy-elems (&rest elems)
+  (labels ((rec (rest)
+             (if (null rest) 
+                 *lazy-nil*
+                 (lazy-cons (car rest) (rec (cdr rest))))))
+    (rec elems)))
+
+(defstruct stream-end)
+(defparameter *stream-end* (make-stream-end))
+
+(defun lazy-stream (stream) 
+  (labels ((rec (next-stream)
+             (let ((next (read-char next-stream nil *stream-end*)))
+               (etypecase next
+                 (stream-end *lazy-nil*)
+                 (t (lazy-cons next (rec next-stream)))))))
+    (rec stream)))
 
 (defun take-while (p lazy-stream)
   (labels ((rec (acc s)
-             (if (funcall p (head s))
+             (etypecase s
+               (lazy-nil (values (reverse acc) s))
+               (lazy-list (if (funcall p (head s))
                  (rec (cons (head s) acc) (tail s))
-                 (values (reverse acc) s))))
+                 (values (reverse acc) s))))))
     (rec nil lazy-stream)))
 
 (defun drop-while (p lazy-stream)
-  (if (funcall p (head lazy-stream))
-      (drop-while p (tail lazy-stream))
-      lazy-stream))
+  (etypecase lazy-stream
+    (lazy-nil lazy-stream)
+    (lazy-list (if (funcall p (head lazy-stream))
+                   (drop-while p (tail lazy-stream))
+                   lazy-stream))))
 
 (defstruct parser f)
 
@@ -43,6 +78,30 @@
 
 (defun apply-parser (p strm)
   (funcall (parser-f p) strm))
+
+(defun transform-sep-stream (parser sep-parser stream)
+  (etypecase stream
+    (lazy-nil *lazy-nil*)
+    (lazy-list (multiple-value-bind (result next-stream) (apply-parser parser stream)
+                 (if (eq result *failure*)
+                     (multiple-value-bind (sep-result sep-stream) (apply-parser sep-parser stream)
+                       (if (eq sep-result *failure*)
+                           *lazy-nil*
+                           (transform-sep-stream parser sep-parser sep-stream)))
+                     (lazy-cons result (transform-sep-stream parser sep-parser next-stream)))))))
+
+(defun transform-stream (parser stream)
+  (etypecase stream
+    (lazy-nil *lazy-nil*)
+    (lazy-list (multiple-value-bind (result next-stream) (apply-parser parser stream)
+                 (if (eq result *failure*)
+                     *failure*
+                     (transform-stream parser next-stream))))))
+
+(defun fold-stream (f stream val)
+  (etypecase stream
+    (lazy-list (fold-stream f (tail stream) (funcall f val (head stream))))
+    (lazy-nil val)))
 
 (defmethod fmap (f (p parser))
   (new-parser (lambda (strm) 
@@ -78,10 +137,12 @@
 
 (defun one (pred) 
   (new-parser (lambda (stream)
-                (let ((c (head stream)))
-                  (if (funcall pred c)
-                      (values (head stream) (tail stream))
-                      *failure*)))))
+                (etypecase stream
+                  (lazy-nil *failure*)
+                  (lazy-list (let ((c (head stream)))
+                               (if (funcall pred c)
+                                   (values (head stream) (tail stream))
+                                   *failure*)))))))
 
 (defun many (pred)
   (new-parser (lambda (stream) 
@@ -110,18 +171,116 @@
          (rest (repeated sep-parser))
          (yield (cons fst rest)))))
 
+(defun discard (pred)
+  (new-parser (lambda (stream)
+                (values nil (drop-while pred stream)))))
+
+(defun whitespacep (c)
+  (or (char= c #\space) (char= c #\newline)
+      (char= c #\return) (char= c #\tab)))
+
+(defun ignore-whitespace () (discard #'whitespacep))
+
+(defun char1 (c)
+  (one (lambda (ch) (char= c ch))))
+
+(defun newlinep (c) (or (char= c #\newline) (char= c #\return)))
+
+(defun seq (s &key (test #'equal))
+  (labels ((rec (i cur-stream)
+             (if (= i (length s))
+                 (values s cur-stream)
+                 (etypecase cur-stream
+                   (lazy-nil *failure*)
+                   (lazy-list (if (funcall test (aref s i) (head cur-stream))
+                                  (rec (+ i 1) (tail cur-stream))
+                                  *failure*))))))
+    (new-parser (lambda (stream) (rec 0 stream)))))
+
+(defun optional (parser)
+  (new-parser (lambda (stream)
+                (multiple-value-bind (result next-stream) (apply-parser parser stream)
+                  (if (eq result *failure*)
+                      (values nil stream)
+                      (values (list result) next-stream))))))
+
 (defun digits-to-int (digits)
   (loop for d in digits
      for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
      finally (return n)))
 
-(defparameter *positive-int* (fmap #'digits-to-int (many1 #'digit-char-p)))
+(defun non-zero-digit ()
+  (one (lambda (c) (and (digit-char-p c) (char/= c #\0)))))
 
-(defun row ()
-  (mdo (vs (sep-by *positive-int* (one (lambda (c) (char= c #\,)))))
-       (_ (one (lambda (c) (char= c #\newline))))
-       (yield vs)))
+(defparameter *positive-int* (fmap #'digits-to-int 
+                                   (mdo (fst (non-zero-digit))
+                                        (rest (many #'digit-char-p))
+                                        (yield (cons fst rest)))))
+
+(defun row () (sep-by *positive-int* (char1 #\,)))
+
+(defun json ()
+  (mdo (_ (ignore-whitespace))
+       (v (orp (json-string)
+               (json-number)
+               (json-object)
+               (json-array)
+               (json-boolean)
+               (json-null)))
+       (yield v)))
+
+(defun json-boolean ()
+  (orp (mdo (_ (seq "true")) (yield t)) 
+       (mdo (_ (seq "false")) (yield nil))))
+
+(defun json-null ()
+  (mdo (_ (seq "null")) (yield nil)))
+
+(defun json-string ()
+  (mdo (_ (char1 #\"))
+       (cs (many (lambda (c) (and (not (newlinep c)) (not (char= c #\"))))))
+       (_ (char1 #\"))
+       (yield (coerce cs 'string))))
+
+(defun json-key-value ()
+  (mdo (_ (ignore-whitespace))
+       (key (json-string))
+       (_ (ignore-whitespace))
+       (_ (char1 #\:))
+       (value (json))
+       (_ (ignore-whitespace))
+       (yield (cons key value))))
+
+(defun json-object ()
+  (mdo (_ (ignore-whitespace))
+       (_ (char1 #\{))
+       (_ (ignore-whitespace))
+       (es (sep-by (json-key-value) (char1 #\,)))
+       (_ (ignore-whitespace))
+       (_ (char1 #\}))
+       (yield es)))
+
+(defun json-array ()
+  (mdo (_ (char1 #\[))
+       (is (sep-by (mdo (v (json)) (_ (ignore-whitespace)) (yield v)) (char1 #\,)))
+       (_ (char1 #\]))
+       (yield is)))
+
+(defun fractional-part ()
+  (mdo (_ (char1 #\.))
+       (ds (many1 #'digit-char-p))
+       (yield (/ (digits-to-int ds) (expt 10 (length ds))))))
+
+;;(defun exponential-part)
+
+(defun json-number ()
+  (mdo (negate (optional (char1 #\-)))
+       (integral-part (orp (mdo (_ (char1 #\0)) (yield 0))
+                           *positive-int*))
+       (f (optional (fractional-part)))
+       (let (n (if f (+ (car f) integral-part) integral-part)))
+       (yield (if negate (- n) n))))
 
 (defun csv ()
-  (repeated (row)))
+  (sep-by (row) (one (lambda (c) (char= c #\newline)))))
 
