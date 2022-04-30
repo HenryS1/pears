@@ -281,12 +281,12 @@
         (c (orp (char1 #\")
                 (char1 #\\)
                 (char1 #\/)
-                (mdo (_ (char1 #\b)) (yield #\backspace))
-                (mdo (_ (char1 #\f)) (yield #\formfeed))
-                (mdo (_ (char1 #\n)) (yield #\newline))
-                (mdo (_ (char1 #\r)) (yield #\return))
-                (mdo (_ (char1 #\t)) (yield #\tab))))
-        (yield (list c)))))
+                (char1 #\b)
+                (char1 #\f)
+                (char1 #\n)
+                (char1 #\r)
+                (char1 #\t)))
+        (yield (list #\\ c)))))
 
 (defun json-string ()
   (mdo (_ (char1 #\"))
@@ -330,7 +330,7 @@
 (defun fractional-part ()
   (mdo (_ (char1 #\.))
        (ds (many1 #'digit-char-p))
-       (yield (/ (digits-to-int ds) (expt 10 (length ds))))))
+       (yield (/ (digits-to-int ds) (expt 10.0 (length ds))))))
 
 (defun exponent-part ()
   (mdo (_ (orp (char1 #\e)
@@ -338,7 +338,7 @@
        (op (orp (mdo (_ (char1 #\-)) (yield #'/))
                 (mdo (_ (char1 #\+)) (yield #'*))))
        (ex *non-negative-int*)
-       (yield (lambda (n) (funcall op n (expt 10 ex))))))
+       (yield (lambda (n) (funcall op n (expt 10.0 ex))))))
 
 (defun json-number ()
   (mdo (negate (optional (char1 #\-)))
@@ -349,5 +349,3 @@
        (let (n (if f (+ (car f) integral-part) integral-part)))
        (let (with-exp (if e (funcall (car e) n) n)))
        (yield (if negate (- with-exp) with-exp))))
-
-
