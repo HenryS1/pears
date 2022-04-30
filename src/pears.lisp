@@ -3,42 +3,24 @@
 
 (in-package :pears)
 
-(defstruct lazy-list head tail)
-
 (defmacro defer (a) `(lambda () ,a))
 
 (defmacro lazy-cons (a tail)
-  `(make-lazy-list :head ,a :tail (defer ,tail)))
-
-(defstruct lazy-nil)
-(defparameter *lazy-nil* (make-lazy-nil))
+  `(cons ,a (defer ,tail)))
 
 (defstruct deferred-stream thunk)
 
 (defun head (lazy-list) 
-  (etypecase lazy-list
-    (lazy-nil nil)
-    (lazy-list (lazy-list-head lazy-list))))
+  (and lazy-list (car lazy-list)))
 
 (defun tail (lazy-list) 
-  (etypecase lazy-list
-    (lazy-nil *lazy-nil*)
-    (lazy-list (let ((evaluated (etypecase (lazy-list-tail lazy-list)
-                        (lazy-list (lazy-list-tail lazy-list))
-                        (lazy-nil *lazy-nil*)
-                        (function (funcall (lazy-list-tail lazy-list))))))
-       (setf (lazy-list-tail lazy-list)
-             (etypecase evaluated
-               (lazy-list
-                (make-lazy-list :head (lazy-list-head evaluated) :tail (lazy-list-tail evaluated)))
-               (lazy-nil *lazy-nil*)))))))
+  (and lazy-list
+    (let ((evaluated (cond ((null (cdr lazy-list)) nil)
+                           ((functionp (cdr lazy-list)) (funcall (cdr lazy-list)))
+                           (t (cdr lazy-list)))))
+      (setf (cdr lazy-list) evaluated))))
 
-(defun lazy-elems (&rest elems)
-  (labels ((rec (rest)
-             (if (null rest) 
-                 *lazy-nil*
-                 (lazy-cons (car rest) (rec (cdr rest))))))
-    (rec elems)))
+(defun lazy-elems (&rest elems) elems)
 
 (defstruct stream-end)
 (defparameter *stream-end* (make-stream-end))
@@ -47,25 +29,25 @@
   (labels ((rec (next-stream)
              (let ((next (read-char next-stream nil *stream-end*)))
                (etypecase next
-                 (stream-end *lazy-nil*)
+                 (stream-end nil)
                  (t (lazy-cons next (rec next-stream)))))))
     (rec stream)))
 
 (defun take-while (p lazy-stream)
   (labels ((rec (acc s)
-             (etypecase s
-               (lazy-nil (values (reverse acc) s))
-               (lazy-list (if (funcall p (head s))
-                 (rec (cons (head s) acc) (tail s))
-                 (values (reverse acc) s))))))
+             (if (null s)
+                 (values (reverse acc) s)
+                 (if (funcall p (car s))
+                     (rec (cons (car s) acc) (tail s))
+                     (values (reverse acc) s)))))
     (rec nil lazy-stream)))
 
 (defun drop-while (p lazy-stream)
-  (etypecase lazy-stream
-    (lazy-nil lazy-stream)
-    (lazy-list (if (funcall p (head lazy-stream))
-                   (drop-while p (tail lazy-stream))
-                   lazy-stream))))
+  (if (null lazy-stream) 
+      lazy-stream
+      (if (funcall p (car lazy-stream))
+          (drop-while p (tail lazy-stream))
+          lazy-stream)))
 
 (defstruct parser f)
 
@@ -80,28 +62,26 @@
   (funcall (parser-f p) strm))
 
 (defun transform-sep-stream (parser sep-parser stream)
-  (etypecase stream
-    (lazy-nil *lazy-nil*)
-    (lazy-list (multiple-value-bind (result next-stream) (apply-parser parser stream)
-                 (if (eq result *failure*)
-                     (multiple-value-bind (sep-result sep-stream) (apply-parser sep-parser stream)
-                       (if (eq sep-result *failure*)
-                           *lazy-nil*
-                           (transform-sep-stream parser sep-parser sep-stream)))
-                     (lazy-cons result (transform-sep-stream parser sep-parser next-stream)))))))
+  (and stream
+       (multiple-value-bind (result next-stream) (apply-parser parser stream)
+         (if (eq result *failure*)
+             (multiple-value-bind (sep-result sep-stream) (apply-parser sep-parser stream)
+               (if (eq sep-result *failure*)
+                   nil
+                   (transform-sep-stream parser sep-parser sep-stream)))
+             (lazy-cons result (transform-sep-stream parser sep-parser next-stream))))))
 
 (defun transform-stream (parser stream)
-  (etypecase stream
-    (lazy-nil *lazy-nil*)
-    (lazy-list (multiple-value-bind (result next-stream) (apply-parser parser stream)
-                 (if (eq result *failure*)
-                     *failure*
-                     (transform-stream parser next-stream))))))
+  (and stream 
+       (multiple-value-bind (result next-stream) (apply-parser parser stream)
+         (if (eq result *failure*)
+             *failure*
+             (transform-stream parser next-stream)))))
 
 (defun fold-stream (f stream val)
-  (etypecase stream
-    (lazy-list (fold-stream f (tail stream) (funcall f val (head stream))))
-    (lazy-nil val)))
+  (if (null stream)
+      val
+      (fold-stream f (tail stream) (funcall f val (head stream)))))
 
 (defmethod fmap (f (p parser))
   (new-parser (lambda (strm) 
@@ -137,12 +117,12 @@
 
 (defun one (pred) 
   (new-parser (lambda (stream)
-                (etypecase stream
-                  (lazy-nil *failure*)
-                  (lazy-list (let ((c (head stream)))
-                               (if (funcall pred c)
-                                   (values (head stream) (tail stream))
-                                   *failure*)))))))
+                (if (null stream)
+                    *failure*
+                    (let ((c (head stream)))
+                      (if (funcall pred c)
+                          (values (head stream) (tail stream))
+                          *failure*))))))
 
 (defun many (pred)
   (new-parser (lambda (stream) 
@@ -198,11 +178,11 @@
   (labels ((rec (i cur-stream)
              (if (= i (length s))
                  (values s cur-stream)
-                 (etypecase cur-stream
-                   (lazy-nil *failure*)
-                   (lazy-list (if (funcall test (aref s i) (head cur-stream))
-                                  (rec (+ i 1) (tail cur-stream))
-                                  *failure*))))))
+                 (if (null cur-stream)
+                     *failure*
+                     (if (funcall test (aref s i) (head cur-stream))
+                         (rec (+ i 1) (tail cur-stream))
+                         *failure*)))))
     (new-parser (lambda (stream) (rec 0 stream)))))
 
 (defun optional (parser)
@@ -217,12 +197,11 @@
                 (labels ((rec (acc i cur-stream)
                            (if (= i 0)
                                (values (reverse acc) cur-stream)
-                               (etypecase cur-stream
-                                 (lazy-nil *failure*)
-                                 (lazy-list 
-                                  (if (funcall predicate (head cur-stream))
-                                      (rec (cons (head cur-stream) acc) (- i 1) (tail cur-stream))
-                                      *failure*))))))
+                               (if (null cur-stream)
+                                   *failure*
+                                   (if (funcall predicate (head cur-stream))
+                                       (rec (cons (head cur-stream) acc) (- i 1) (tail cur-stream))
+                                       *failure*)))))
                   (rec nil n stream)))))
 
 (defun digits-to-int (digits)
