@@ -33,6 +33,9 @@
         (decf (bs-remaining buff-stream))
         value)))
 
+(defstruct stream-end)
+(defparameter *stream-end* (make-stream-end))
+
 (defun buffer-stream (strm)
   (declare (optimize (speed 3)))
   (let ((buffered (make-bs :strm strm)))
@@ -54,9 +57,6 @@
       (setf (cdr lazy-list) evaluated))))
 
 (defun lazy-elems (&rest elems) elems)
-
-(defstruct stream-end)
-(defparameter *stream-end* (make-stream-end))
 
 (defun lazy-stream (stream) 
   (labels ((rec (next-stream)
@@ -130,10 +130,40 @@
            *failure*
            (apply-parser (funcall f result) new-stream))))))
 
+(defmacro sequential (&rest body)
+  (labels ((nest (parser-bindings cur-stream value-form)
+             (if (null parser-bindings)
+                 `(values ,value-form ,cur-stream)
+                 (let* ((bindings (car parser-bindings))
+                        (result-binding (car bindings))
+                        (cur-parser (cadr bindings))
+                        (next-result (gensym))
+                        (next-stream (gensym)))
+                   `(multiple-value-bind (,next-result ,next-stream)
+                        (apply-parser ,cur-parser ,cur-stream)
+                      (if (eq ,next-result *failure*)
+                          *failure*
+                          ,(if (string= (symbol-name result-binding) "_")
+                               (nest (cdr parser-bindings) next-stream value-form)
+                              `(let ((,result-binding ,next-result))
+                                 ,(nest (cdr parser-bindings) next-stream value-form)))))))))
+    (let* ((init-stream (gensym))
+           (parser-bindings (butlast body))
+           (evaluated-parsers (loop for (b p) in parser-bindings collect (list (gensym) nil)))
+           (bindings (loop for (b p) in parser-bindings for (sym nl) in evaluated-parsers
+                          collect `(,b (or ,sym (setf ,sym ,p)))))
+           (value-form (car (last body))))
+      `(new-parser (let ,evaluated-parsers 
+                     (lambda (,init-stream)
+                       ,(nest bindings init-stream value-form)))))))
+
 (defmacro orp (&rest parsers)
   (if (null parsers)
       (error "orp must be given at least one parser")
       (let* ((reversed-parsers (reverse parsers))
+             (evaluated-parsers (loop for p in reversed-parsers collect `(,(gensym) nil)))
+             (parsers (mapcar (lambda (sym p) `(or ,(car sym) (setf ,(car sym) ,p))) 
+                              evaluated-parsers reversed-parsers))
              (stream (gensym))
              (parse-attempts (reduce (lambda (acc p)
                                       (let ((result (gensym))
@@ -143,10 +173,11 @@
                                            (if (eq ,result *failure*)
                                                ,acc
                                                (values ,result ,next-stream)))))
-                                     (cdr reversed-parsers)
+                                     (cdr parsers)
                                      :initial-value 
-                                     `(apply-parser ,(car reversed-parsers) ,stream))))
-        `(new-parser (lambda (,stream) ,parse-attempts)))))
+                                     `(apply-parser ,(car parsers) ,stream))))
+        `(new-parser (let ,evaluated-parsers 
+                       (lambda (,stream) ,parse-attempts))))))
 
 (defun one (pred) 
   (new-parser (lambda (stream)
@@ -244,29 +275,6 @@
 
 (defun non-zero-digit ()
   (one (lambda (c) (and (digit-char-p c) (char/= c #\0)))))
-
-(defmacro sequential (&rest body)
-  (labels ((nest (parser-bindings cur-stream value-form)
-             (if (null parser-bindings)
-                 `(values ,value-form ,cur-stream)
-                 (let* ((bindings (car parser-bindings))
-                        (result-binding (car bindings))
-                        (cur-parser (cadr bindings))
-                        (next-result (gensym))
-                        (next-stream (gensym)))
-                   `(multiple-value-bind (,next-result ,next-stream)
-                        (apply-parser ,cur-parser ,cur-stream)
-                      (if (eq ,next-result *failure*)
-                          *failure*
-                          ,(if (string= (symbol-name result-binding) "_")
-                               (nest (cdr parser-bindings) next-stream value-form)
-                              `(let ((,result-binding ,next-result))
-                                 ,(nest (cdr parser-bindings) next-stream value-form)))))))))
-    (let ((init-stream (gensym))
-          (parser-bindings (butlast body))
-          (value-form (car (last body))))
-      `(new-parser (lambda (,init-stream)
-                     ,(nest parser-bindings init-stream value-form))))))
 
 (defparameter *positive-int* (sequential (fst (non-zero-digit))
                                          (rest (many #'digit-char-p))
