@@ -39,10 +39,13 @@
 (defstruct indexed-stream buffer)
 
 (defun stream-subseq (indexed-stream start end)
-  (subseq (indexed-stream-buffer indexed-stream) start end))
+  (declare (optimize (speed 3)) (fixnum start end))
+  (subseq (the vector (indexed-stream-buffer indexed-stream)) start end))
 
 (defun get-entry (indexed-stream i)
+  (declare (fixnum i) (optimize (speed 3) (debug 0)))
   (let ((buffer (indexed-stream-buffer indexed-stream)))
+    (declare (vector buffer))
     (if (< i (length buffer))
         (aref buffer i)
         *stream-end*)))
@@ -72,7 +75,7 @@
 (defun tail (lazy-list) 
   (and lazy-list
     (let ((evaluated (cond ((null (cdr lazy-list)) nil)
-                           ((functionp (cdr lazy-list)) (funcall (cdr lazy-list)))
+                           ((functionp (cdr lazy-list)) (funcall (the function (cdr lazy-list))))
                            (t (cdr lazy-list)))))
       (setf (cdr lazy-list) evaluated))))
 
@@ -88,19 +91,21 @@
 
 (defun take-while (p stream i)
   (labels ((rec (end)
+             (declare (fixnum end i))
              (let ((entry (get-entry stream end)))
                (etypecase entry
                  (stream-end end)
-                 (t (if (funcall p entry)
+                 (t (if (funcall (the function p) entry)
                         (rec (+ end 1))
                         end))))))
     (rec i)))
 
 (defun drop-while (p lazy-stream i)
+  (declare (fixnum i))
   (let ((entry (get-entry lazy-stream i)))
     (etypecase entry
       (stream-end i)
-      (t (if (funcall p entry)
+      (t (if (funcall (the function p) entry)
              (drop-while p lazy-stream (+ i 1))
              i)))))
 
@@ -114,7 +119,7 @@
   (make-parser :f f))
 
 (defun apply-parser (p strm i)
-  (funcall (parser-f p) strm i))
+  (funcall (the function (parser-f p)) strm i))
 
 ;; (defun transform-sep-stream (parser sep-parser stream)
 ;;   (labels ((rec (i)
@@ -144,14 +149,14 @@
                 (multiple-value-bind (result new-i) (apply-parser p strm i)
                   (if (eq result *failure*) 
                       *failure* 
-                      (values (funcall f result) new-i))))))
+                      (values (funcall (the function f) result) new-i))))))
 
 (defmethod flatmap (f (p parser))
   (new-parser (lambda (strm i)
      (multiple-value-bind (result new-i) (apply-parser p strm i)
        (if (eq result *failure*)
            *failure*
-           (apply-parser (funcall f result) strm new-i))))))
+           (apply-parser (funcall (the function f) result) strm new-i))))))
 
 (defmacro sequential (&rest body)
   (let ((stream (gensym)) (init-i (gensym)))
@@ -205,10 +210,11 @@
 
 (defun one (pred) 
   (new-parser (lambda (stream i)
+                (declare (fixnum i))
                 (let ((entry (get-entry stream i)))
                   (etypecase entry
                     (stream-end *failure*)
-                    (t (if (funcall pred entry)
+                    (t (if (funcall (the function pred) entry)
                            (values entry (+ i 1))
                            *failure*)))))))
 
@@ -219,7 +225,9 @@
 
 (defun many1 (pred)
   (new-parser (lambda (stream i)
+                (declare (fixnum i))
                 (let ((end (take-while pred stream i)))
+                  (declare (fixnum end))
                   (if (= i end)
                       *failure*
                       (values (stream-subseq stream i end) end))))))
@@ -268,13 +276,15 @@
 (defun newlinep (c) (or (char= c #\newline) (char= c #\return)))
 
 (defun seq (s &key (test #'equal))
+  (declare (vector s))
   (labels ((rec (stream cnt i)
+             (declare (fixnum cnt i))
              (if (= cnt (length s))
                  (values s i)
                  (let ((entry (get-entry stream i)))
                    (etypecase entry
                      (stream-end *failure*)
-                     (t (if (funcall test (aref s cnt) entry)
+                     (t (if (funcall (the function test) (aref s cnt) entry)
                           (rec stream (+ cnt 1) (+ i 1))
                           *failure*)))))))
     (new-parser (lambda (stream i) (rec stream 0 i)))))
@@ -288,10 +298,11 @@
 
 (defun manyn (predicate n)
   (new-parser (lambda (stream i)
+                (declare (fixnum i n))
                 (loop for cur-i = i then (+ cur-i 1)
                    for cnt = 0 then (+ cnt 1)
                    for entry = (get-entry stream cur-i)
-                   while (and (funcall predicate entry) (< cnt n))
+                   while (and (funcall (the function predicate) entry) (< cnt n))
                    collect entry into results
                    finally (return (if (= cnt n)
                                        (values results i)
@@ -307,7 +318,7 @@
 
 (defparameter *positive-int* (sequential (fst (non-zero-digit))
                                          (rest (many #'digit-char-p))
-                                         (+ (* (expt 10 (length rest)) 
+                                         (+ (* (expt 10 (length (the vector rest))) 
                                                (digit-char-p fst))
                                             (digits-to-int rest))))
 
@@ -381,7 +392,7 @@
               (cons key value)))
 
 (defun alist-to-hash-table (alist)
-  (let ((table (make-hash-table :test 'equal)))
+  (let ((table (make-hash-table :test 'equal :size (length alist))))
     (mapc (lambda (e) (setf (gethash (car e) table) (cdr e))) alist)
     table))
 
@@ -392,7 +403,7 @@
               (es (sep-by (json-key-value) (char1 #\,)))
               (_ (ignore-whitespace))
               (_ (char1 #\}))
-              (alist-to-hash-table es)))
+             (alist-to-hash-table es)))
 
 (defun json-array ()
   (sequential (_ (char1 #\[))
