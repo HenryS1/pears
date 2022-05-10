@@ -21,43 +21,18 @@
         ((and (>= start (indexed-stream-start indexed-stream))
               (<= end (+ (indexed-stream-start indexed-stream)
                          (length (indexed-stream-buffer indexed-stream)))))
-         (progn 
-           ;; (format t "subseq1 ~a ~a~%" 
-           ;;         (- start (indexed-stream-start indexed-stream))
-           ;;         (- end (indexed-stream-start indexed-stream)))
-           (subseq (indexed-stream-buffer indexed-stream) 
-                   (- start (indexed-stream-start indexed-stream))
-                   (- end (indexed-stream-start indexed-stream)))))
+         (subseq (indexed-stream-buffer indexed-stream) 
+                 (- start (indexed-stream-start indexed-stream))
+                 (- end (indexed-stream-start indexed-stream))))
         ((>= start (indexed-stream-end indexed-stream))
          (stream-subseq (indexed-stream-next indexed-stream) start end))
-        (t ;; (format t "LOOP CONCAT~%")
-           ;; (format t "STREAM-START ~a STREAM-END ~a END ~a~%"
-           ;;         (indexed-stream-start indexed-stream)
-           ;;         (indexed-stream-end indexed-stream)
-           ;;         end)
-           (apply #'concatenate 'string
+        (t (apply #'concatenate 'string
                   (loop for stream = indexed-stream then (indexed-stream-next stream)
-                     until (progn 
-                             (or (null stream) 
-                                 (< end (+ (indexed-stream-end stream) 1))))
-                     ;; do (format t "STREAM-START ~a STREAM-END ~a~%"
-                     ;;            (indexed-stream-start stream)
-                     ;;            (indexed-stream-end stream))
-                     when (not (null stream))
-                     collect (progn 
-                               ;; (format t "subseq2 start ~a end ~a stream-start ~a stream-end ~a length ~a SUBSEQ '~a'~%" 
-                               ;;         start end 
-                               ;;         (indexed-stream-start stream)
-                               ;;         (indexed-stream-end stream)
-                               ;;         (length (indexed-stream-buffer stream))
-                               ;;         (subseq (indexed-stream-buffer stream)
-                               ;;         (max 0 (- start (indexed-stream-start stream)))
-                               ;;         (min (length (indexed-stream-buffer stream))
-                               ;;              (- end (indexed-stream-start stream)))))
-                               (subseq (indexed-stream-buffer stream)
-                                       (max 0 (- start (indexed-stream-start stream)))
-                                       (min (length (indexed-stream-buffer stream))
-                                            (- end (indexed-stream-start stream))))))))))
+                        until (< end (+ (indexed-stream-end stream) 1))
+                        collect (subseq (indexed-stream-buffer stream)
+                                        (max 0 (- start (indexed-stream-start stream)))
+                                        (min (length (indexed-stream-buffer stream))
+                                             (- end (indexed-stream-start stream)))))))))
 
 (defparameter *buffer-size* 100000)
 
@@ -98,9 +73,6 @@
 
 (defun indexed-file-stream (file-stream)
   (read-stream-chunk 0 file-stream))
-
-;; (defun indexed-string-stream (str)
-;;   (make-indexed-stream :buffer str))
 
 (defun take-while (p stream i)
   (labels ((rec (stream end)
@@ -160,16 +132,16 @@
 (defmethod fmap (f (p parser))
   (new-parser (lambda (strm i) 
                 (multiple-value-bind (result new-strm new-i) (apply-parser p strm i)
-                  (if (eq result *failure*) 
-                      *failure* 
-                      (values (funcall (the function f) result) new-strm new-i))))))
+                  (etypecase result 
+                    (failure result)
+                    (t (values (funcall (the function f) result) new-strm new-i)))))))
 
 (defmethod flatmap (f (p parser))
   (new-parser (lambda (strm i)
      (multiple-value-bind (result new-stream new-i) (apply-parser p strm i)
-       (if (eq result *failure*)
-           *failure*
-           (apply-parser (funcall (the function f) result) new-stream new-i))))))
+       (etypecase result
+         (failure result)
+         (t (apply-parser (funcall (the function f) result) new-stream new-i)))))))
 
 (defmacro sequential (&rest body)
   (let ((init-stream (gensym)) (init-i (gensym)))
@@ -184,13 +156,13 @@
                           (next-stream (gensym)))
                      `(multiple-value-bind (,next-result ,next-stream ,next-i)
                           (apply-parser ,cur-parser ,cur-stream ,cur-i)
-                        (if (eq ,next-result *failure*)
-                            *failure*
-                            ,(if (string= (symbol-name result-binding) "_")
-                                 (nest (cdr parser-bindings) next-stream next-i value-form)
-                                 `(let ((,result-binding ,next-result))
-                                    ,(nest (cdr parser-bindings) 
-                                           next-stream next-i value-form)))))))))
+                        (etypecase ,next-result 
+                          (failure ,next-result)
+                          (t ,(if (string= (symbol-name result-binding) "_")
+                                  (nest (cdr parser-bindings) next-stream next-i value-form)
+                                  `(let ((,result-binding ,next-result))
+                                     ,(nest (cdr parser-bindings) 
+                                            next-stream next-i value-form))))))))))
       (let* ((parser-bindings (butlast body))
              (evaluated-parsers (loop for (b p) in parser-bindings collect (list (gensym) nil)))
              (bindings (loop for (b p) in parser-bindings for (sym nl) in evaluated-parsers
@@ -215,9 +187,9 @@
                                             (next-stream (gensym)))
                                         `(multiple-value-bind (,result ,next-stream ,next-i) 
                                              (apply-parser ,p ,init-stream ,init-i)
-                                           (if (eq ,result *failure*)
-                                               ,acc
-                                               (values ,result ,next-stream ,next-i)))))
+                                           (etypecase ,result
+                                             (failure ,acc) 
+                                             (t (values ,result ,next-stream ,next-i))))))
                                      (cdr parsers)
                                      :initial-value 
                                      `(apply-parser ,(car parsers) ,init-stream ,init-i))))
@@ -237,7 +209,6 @@
 (defun many (pred)
   (new-parser (lambda (stream i) 
                 (multiple-value-bind (next-stream end) (take-while pred stream i)
-;                  (format t "MANY I ~a END ~a STREAM SUBSEQ '~a'~%" i end (stream-subseq stream i end))
                   (values (stream-subseq stream i end) next-stream end)))))
 
 (defun many1 (pred)
@@ -247,9 +218,7 @@
                   (declare (fixnum end))
                   (if (= i end)
                       *failure*
-                      (progn
-;                        (format t "MANY1 I ~a END ~a~%" i end)
-                        (values (stream-subseq stream i end) next-stream end)))))))
+                      (values (stream-subseq stream i end) next-stream end))))))
 
 (defun repeated (parser)
   (new-parser (lambda (stream i)
@@ -258,7 +227,7 @@
                    for (result next-stream end) = (multiple-value-list
                                                   (apply-parser parser stream i))
                    then (multiple-value-list (apply-parser parser next-stream end))
-                   while (not (eq result *failure*))
+                   while (etypecase result (failure nil) (t t))
                    collect result into results
                    finally (return (values results stream-prev end-prev))))))
 
@@ -269,7 +238,7 @@
                    for (result next-stream end) = (multiple-value-list
                                                    (apply-parser parser stream i))
                    then (multiple-value-list (apply-parser parser next-stream end))
-                   while (not (eq result *failure*))
+                   while (etypecase result (failure nil) (t t))
                    collect result into results
                    finally (return (if (null results)
                                        *failure*
@@ -316,14 +285,13 @@
 (defun optional (parser)
   (new-parser (lambda (stream i)
                 (multiple-value-bind (result next-stream next-i) (apply-parser parser stream i)
-                  (if (eq result *failure*)
-                      (values nil stream i)
-                      (values (list result) next-stream next-i))))))
+                  (etypecase result
+                    (failure (values nil stream i))
+                    (t (values (list result) next-stream next-i)))))))
 
 (defun manyn (predicate n)
   (new-parser (lambda (stream i)
                 (declare (fixnum i n))
-;;                (format t "MANYN STREAM ~a I ~a~%" stream i)
                 (loop for cur-i = i then (+ cur-i 1)
                    for cnt = 0 then (+ cnt 1)
                    for (entry next-stream) = (multiple-value-list (get-entry stream cur-i))
@@ -440,9 +408,7 @@
 (defun fractional-part ()
   (sequential (_ (char1 #\.))
               (ds (many1 #'digit-char-p))
-              (progn 
-;                (format t "FRACTIONAL PART~%")
-                (/ (digits-to-int ds) (expt 10.0 (length ds))))))
+              (/ (digits-to-int ds) (expt 10.0 (length ds)))))
 
 (defun exponent-part ()
   (sequential (_ (orp (char1 #\e)
@@ -450,24 +416,19 @@
               (op (orp (sequential (_ (char1 #\-)) #'/)
                        (sequential (_ (char1 #\+)) #'*)))
               (ex *non-negative-int*)
-              (progn 
-;                (format t "EXPONENT PART~%")
-                (lambda (n) (funcall op n (expt 10.0 ex))))))
+              (lambda (n) (funcall op n (expt 10.0 ex)))))
 
 (defun integral-part ()
   (sequential 
    (i (orp (sequential (_ (char1 #\0)) 0)
            *positive-int*))
-   (progn ;(format t "INTEGRAL PART ~a~%" i)
-          i)))
+          i))
 
 (defun json-number ()
   (sequential (negate (optional (char1 #\-)))
               (int (integral-part))
               (f (optional (fractional-part)))
               (e (optional (exponent-part)))
-              (progn 
-;                (format t "JSON-NUMBER RESULT~%")
-                (let* ((n (if f (+ (car f) int) int))
-                       (with-exp (if e (funcall (car e) n) n)))
-                  (if negate (- with-exp) with-exp)))))
+              (let* ((n (if f (+ (car f) int) int))
+                     (with-exp (if e (funcall (car e) n) n)))
+                (if negate (- with-exp) with-exp))))
