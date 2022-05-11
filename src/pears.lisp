@@ -1,9 +1,9 @@
+(declaim (optimize (speed 3) (debug 0)))
+
 (defpackage :pears
   (:use :cl :monad))
 
 (in-package :pears)
-
-(defmacro defer (a) `(lambda () ,a))
 
 (defstruct stream-end)
 (defparameter *stream-end* (make-stream-end))
@@ -64,7 +64,6 @@
              ((< (indexed-stream-end indexed-stream)
                  (+ (indexed-stream-start indexed-stream)
                     (length (indexed-stream-buffer indexed-stream)))) (values nil *stream-end*))
-             ((null (indexed-stream-stream indexed-stream)) (values nil *stream-end*))
              (t (when (null (indexed-stream-next indexed-stream))
                   (setf (indexed-stream-next indexed-stream)
                         (read-stream-chunk (indexed-stream-end indexed-stream) 
@@ -130,18 +129,21 @@
 ;;       (fold-stream f (tail stream) (funcall f val ( stream)))))
 
 (defmethod fmap (f (p parser))
-  (new-parser (lambda (strm i) 
-                (multiple-value-bind (result new-strm new-i) (apply-parser p strm i)
-                  (etypecase result 
-                    (failure result)
-                    (t (values (funcall (the function f) result) new-strm new-i)))))))
+  (let ((p-f (parser-f p)))
+   (new-parser (lambda (strm i) 
+                 (multiple-value-bind (result new-strm new-i) (funcall p-f strm i)
+                   (etypecase result 
+                     (failure result)
+                     (t (values (funcall (the function f) result) new-strm new-i))))))))
 
 (defmethod flatmap (f (p parser))
-  (new-parser (lambda (strm i)
-     (multiple-value-bind (result new-stream new-i) (apply-parser p strm i)
-       (etypecase result
-         (failure result)
-         (t (apply-parser (funcall (the function f) result) new-stream new-i)))))))
+  (let ((p-f (parser-f p)))
+    (declare (function p-f))
+    (new-parser (lambda (strm i)
+                  (multiple-value-bind (result new-stream new-i) (funcall p-f strm i)
+                    (etypecase result
+                      (failure result)
+                      (t (apply-parser (funcall (the function f) result) new-stream new-i))))))))
 
 (defmacro sequential (&rest body)
   (let ((init-stream (gensym)) (init-i (gensym)))
@@ -155,7 +157,7 @@
                           (next-i (gensym))
                           (next-stream (gensym)))
                      `(multiple-value-bind (,next-result ,next-stream ,next-i)
-                          (apply-parser ,cur-parser ,cur-stream ,cur-i)
+                          (funcall ,cur-parser ,cur-stream ,cur-i)
                         (etypecase ,next-result 
                           (failure ,next-result)
                           (t ,(if (string= (symbol-name result-binding) "_")
@@ -166,7 +168,7 @@
       (let* ((parser-bindings (butlast body))
              (evaluated-parsers (loop for (b p) in parser-bindings collect (list (gensym) nil)))
              (bindings (loop for (b p) in parser-bindings for (sym nl) in evaluated-parsers
-                          collect `(,b (or ,sym (setf ,sym ,p)))))
+                          collect `(,b (or ,sym (setf ,sym (if (parser-p ,p) (parser-f ,p) ,p))))))
              (value-form (car (last body))))
         `(new-parser (let ,evaluated-parsers 
                        (lambda (,init-stream ,init-i)
@@ -177,7 +179,9 @@
       (error "orp must be given at least one parser")
       (let* ((reversed-parsers (reverse parsers))
              (evaluated-parsers (loop for p in reversed-parsers collect `(,(gensym) nil)))
-             (parsers (mapcar (lambda (sym p) `(or ,(car sym) (setf ,(car sym) ,p))) 
+             (parsers (mapcar (lambda (sym p) `(or ,(car sym) 
+                                                   (setf ,(car sym)
+                                                         (if (parser-p ,p) (parser-f ,p) ,p)))) 
                               evaluated-parsers reversed-parsers))
              (init-stream (gensym))
              (init-i (gensym))
@@ -186,13 +190,13 @@
                                             (next-i (gensym))
                                             (next-stream (gensym)))
                                         `(multiple-value-bind (,result ,next-stream ,next-i) 
-                                             (apply-parser ,p ,init-stream ,init-i)
+                                             (funcall ,p ,init-stream ,init-i)
                                            (etypecase ,result
                                              (failure ,acc) 
                                              (t (values ,result ,next-stream ,next-i))))))
                                      (cdr parsers)
                                      :initial-value 
-                                     `(apply-parser ,(car parsers) ,init-stream ,init-i))))
+                                     `(funcall ,(car parsers) ,init-stream ,init-i))))
         `(new-parser (let ,evaluated-parsers 
                        (lambda (,init-stream ,init-i) ,parse-attempts))))))
 
@@ -221,15 +225,17 @@
                       (values (stream-subseq stream i end) next-stream end))))))
 
 (defun repeated (parser)
-  (new-parser (lambda (stream i)
-                (loop for end-prev = i then end
-                   for stream-prev = stream then next-stream
-                   for (result next-stream end) = (multiple-value-list
-                                                  (apply-parser parser stream i))
-                   then (multiple-value-list (apply-parser parser next-stream end))
-                   while (etypecase result (failure nil) (t t))
-                   collect result into results
-                   finally (return (values results stream-prev end-prev))))))
+  (let ((p-f (parser-f parser)))
+    (declare (function p-f))
+    (new-parser (lambda (stream i)
+                  (loop for end-prev = i then end
+                        for stream-prev = stream then next-stream
+                        for (result next-stream end) = (multiple-value-list
+                                                        (funcall p-f stream i))
+                        then (multiple-value-list (funcall p-f next-stream end))
+                        while (etypecase result (failure nil) (t t))
+                        collect result into results
+                        finally (return (values results stream-prev end-prev)))))))
 
 (defun repeated1 (parser)
   (new-parser (lambda (stream i)
@@ -283,11 +289,13 @@
     (new-parser (lambda (stream i) (rec stream 0 i)))))
 
 (defun optional (parser)
-  (new-parser (lambda (stream i)
-                (multiple-value-bind (result next-stream next-i) (apply-parser parser stream i)
-                  (etypecase result
-                    (failure (values nil stream i))
-                    (t (values (list result) next-stream next-i)))))))
+  (let ((p-f (parser-f parser)))
+    (declare (function p-f))
+    (new-parser (lambda (stream i)
+                  (multiple-value-bind (result next-stream next-i) (funcall p-f stream i)
+                    (etypecase result
+                      (failure (values nil stream i))
+                      (t (values (list result) next-stream next-i))))))))
 
 (defun manyn (predicate n)
   (new-parser (lambda (stream i)
