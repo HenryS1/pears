@@ -53,6 +53,14 @@
    :stream nil
    :next nil))
 
+(defun get-next-chunk (indexed-stream)
+  (let ((stream (indexed-stream-stream indexed-stream))) 
+    (if (null stream) 
+        *stream-end*
+        (let ((next (read-stream-chunk (indexed-stream-end indexed-stream) stream)))
+          (setf (indexed-stream-next indexed-stream) next)
+          next))))
+
 (defun get-entry (indexed-stream i)
   (declare ((unsigned-byte 32) i) (optimize (speed 3)))
   (etypecase indexed-stream
@@ -65,28 +73,49 @@
                  (+ (indexed-stream-start indexed-stream)
                     (length (indexed-stream-buffer indexed-stream)))) (values nil *stream-end*))
              (t (when (null (indexed-stream-next indexed-stream))
-                  (setf (indexed-stream-next indexed-stream)
-                        (read-stream-chunk (indexed-stream-end indexed-stream) 
-                                           (indexed-stream-stream indexed-stream))))
+                  (get-next-chunk indexed-stream))
                 (get-entry (indexed-stream-next indexed-stream) i))))))
 
 (defun indexed-file-stream (file-stream)
   (read-stream-chunk 0 file-stream))
 
-(defun take-while (p stream i)
-  (labels ((rec (stream end)
-             (declare (fixnum end i))
-             (multiple-value-bind (entry next-stream) (get-entry stream end)
-               (etypecase next-stream
-                 (stream-end (values next-stream end))
-                 (t (if (funcall (the function p) entry)
-                        (rec next-stream (+ end 1))
-                        (values next-stream end)))))))
-    (rec stream i)))
+(defparameter *empty-chunk* 
+  (make-indexed-stream
+   :start 0
+   :buffer (vector)
+   :end 0
+   :stream nil
+   :next nil))
 
-(defun drop-while (p lazy-stream i)
+(defun take-while (pred stream i)
   (declare (fixnum i))
-  (multiple-value-bind (entry next-stream) (get-entry lazy-stream i)
+  (labels ((rec (stream end)
+             (declare (fixnum end))
+             (etypecase stream
+               (stream-end (values *stream-end* end))
+               (t (loop with stream-start = (indexed-stream-start stream)
+                        with stream-end = (indexed-stream-end stream)
+                        with buffer = (indexed-stream-buffer stream)
+                        for i from (- end stream-start) to (- (min (length buffer)
+                                                                   (- stream-end stream-start)) 1)
+                        for el = (aref buffer i)
+                        while (funcall pred el)
+                        finally (return (cond ((= stream-start stream-end) 
+                                               (values *stream-end* end))
+                                              ((= end stream-end) 
+                                               (rec (get-next-chunk stream) end))
+                                              ((not (funcall pred el))
+                                               (values stream (+ i stream-start)))
+                                              ((= i (length buffer))
+                                               (rec (get-next-chunk stream)
+                                                    (+ stream-start i)))
+                                              (t (values stream (+ i stream-start))))))))))
+    (multiple-value-bind (next-stream result) (rec stream i)
+      (values next-stream result))))
+
+(defun drop-while (p stream i)
+  (declare (fixnum i))
+  (multiple-value-bind (entry next-stream) (get-entry stream i)
     (etypecase entry
       (stream-end (values next-stream i))
       (t (if (funcall (the function p) entry)
@@ -133,7 +162,7 @@
    (new-parser (lambda (strm i) 
                  (multiple-value-bind (result new-strm new-i) (funcall p-f strm i)
                    (etypecase result 
-                     (failure result)
+                     (failure (values result i))
                      (t (values (funcall (the function f) result) new-strm new-i))))))))
 
 (defmethod flatmap (f (p parser))
@@ -159,7 +188,7 @@
                      `(multiple-value-bind (,next-result ,next-stream ,next-i)
                           (funcall ,cur-parser ,cur-stream ,cur-i)
                         (etypecase ,next-result 
-                          (failure ,next-result)
+                          (failure (values ,next-result ,next-i))
                           (t ,(if (string= (symbol-name result-binding) "_")
                                   (nest (cdr parser-bindings) next-stream next-i value-form)
                                   `(let ((,result-binding ,next-result))
@@ -205,10 +234,10 @@
                 (declare (fixnum i))
                 (multiple-value-bind (entry next-stream) (get-entry stream i)
                   (etypecase next-stream
-                    (stream-end *failure*)
+                    (stream-end (values *failure* i))
                     (t (if (funcall (the function pred) entry)
                            (values entry next-stream (+ i 1))
-                           *failure*)))))))
+                           (values *failure* i))))))))
 
 (defun many (pred)
   (new-parser (lambda (stream i) 
@@ -221,7 +250,7 @@
                 (multiple-value-bind (next-stream end) (take-while pred stream i)
                   (declare (fixnum end))
                   (if (= i end)
-                      *failure*
+                      (values *failure* i)
                       (values (stream-subseq stream i end) next-stream end))))))
 
 (defun repeated (parser)
@@ -247,7 +276,7 @@
                    while (etypecase result (failure nil) (t t))
                    collect result into results
                    finally (return (if (null results)
-                                       *failure*
+                                       (values *failure* i)
                                        (values results stream-prev end-prev)))))))
 
 (defun sep-by (value-parser sep-parser)
@@ -282,10 +311,10 @@
                  (values s stream i)
                  (multiple-value-bind (entry next-stream) (get-entry stream i)
                    (etypecase next-stream
-                     (stream-end *failure*)
+                     (stream-end (values *failure* i))
                      (t (if (funcall (the function test) (aref s cnt) entry)
                             (rec next-stream (+ cnt 1) (+ i 1))
-                            *failure*)))))))
+                            (values *failure* i))))))))
     (new-parser (lambda (stream i) (rec stream 0 i)))))
 
 (defun optional (parser)
@@ -308,21 +337,23 @@
                    collect entry into results
                    finally (return (if (= cnt n)
                                        (values next-stream results i)
-                                       *failure*))))))
+                                       (values *failure* i)))))))
 
 (defun digits-to-int (digits)
   (loop for d across digits
-     for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
-     finally (return n)))
+        for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
+        finally (return n)))
 
 (defun non-zero-digit ()
   (one (lambda (c) (and (digit-char-p c) (char/= c #\0)))))
 
 (defparameter *positive-int* (sequential (fst (non-zero-digit))
                                          (rest (many #'digit-char-p))
-                                         (+ (* (expt 10 (length (the vector rest))) 
-                                               (digit-char-p fst))
-                                            (digits-to-int rest))))
+                                         (if (> (length rest) 0)
+                                             (+ (* (expt 10 (length (the vector rest))) 
+                                                   (digit-char-p fst))
+                                                (digits-to-int rest))
+                                             (digit-char-p fst))))
 
 (defparameter *non-negative-int* (orp (sequential (_ (char1 #\0)) 0) *positive-int*))
 
