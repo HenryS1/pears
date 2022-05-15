@@ -65,7 +65,8 @@
   (declare ((unsigned-byte 32) i) (optimize (speed 3)))
   (etypecase indexed-stream
     (stream-end (values i *stream-end*))
-    (t (cond ((< i (indexed-stream-end indexed-stream))
+    (t (cond ((null indexed-stream) (values nil *stream-end*))
+             ((< i (indexed-stream-end indexed-stream))
               (values (aref (indexed-stream-buffer indexed-stream) 
                             (- i (indexed-stream-start indexed-stream)))
                       indexed-stream))
