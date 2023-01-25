@@ -1,7 +1,16 @@
-(declaim (optimize (speed 3) (debug 0)))
-
 (defpackage :pears
-  (:use :cl :monad))
+  (:use :cl :monad)
+  (:export
+   :make-indexed-stream 
+   :stream-subseq
+   :read-stream-chunk
+   :indexed-stream-buffer
+   :indexed-stream-start
+   :indexed-stream-end
+   :indexed-stream-next
+   :set-indexed-stream-next
+   :new-indexed-stream
+   :get-entry))
 
 (in-package :pears)
 
@@ -15,6 +24,24 @@
   (stream nil :type t)
   (next nil :type t))
 
+(defun read-stream-chunk (start stream buffer-size)
+  (let ((buffer (make-array buffer-size :element-type 'character :adjustable nil)))
+    (make-indexed-stream 
+     :start start 
+     :buffer buffer 
+     :end (+ start (read-sequence buffer stream))
+     :stream stream
+     :next nil)))
+
+(defun new-indexed-stream (stream buffer-size)
+  (read-stream-chunk 0 stream buffer-size))
+
+(defun indexed-stream-size (indexed-stream)
+  (- (indexed-stream-end indexed-stream) (indexed-stream-start indexed-stream)))
+
+(defun set-indexed-stream-next (indexed-stream next-str)
+  (setf (indexed-stream-next indexed-stream) next-str))
+
 (defun stream-subseq (indexed-stream start end)
   (declare (optimize (speed 3)) ((unsigned-byte 32) start end))
   (cond ((null indexed-stream) nil)
@@ -27,23 +54,13 @@
         ((>= start (indexed-stream-end indexed-stream))
          (stream-subseq (indexed-stream-next indexed-stream) start end))
         (t (apply #'concatenate 'string
-                  (loop for stream = indexed-stream then (indexed-stream-next stream)
-                        until (< end (+ (indexed-stream-end stream) 1))
+                  (loop for stream = indexed-stream then (get-next-chunk stream )
+                        for current-start = start then (indexed-stream-start stream)
                         collect (subseq (indexed-stream-buffer stream)
-                                        (max 0 (- start (indexed-stream-start stream)))
+                                        (max 0 (- current-start (indexed-stream-start stream)))
                                         (min (length (indexed-stream-buffer stream))
-                                             (- end (indexed-stream-start stream)))))))))
-
-(defparameter *buffer-size* 100000)
-
-(defun read-stream-chunk (start stream)
-  (let ((buffer (make-array *buffer-size* :element-type 'character :adjustable nil)))
-    (make-indexed-stream 
-     :start start 
-     :buffer buffer 
-     :end (+ start (read-sequence buffer stream))
-     :stream stream
-     :next nil)))
+                                             (- end (indexed-stream-start stream))))
+                        until (< end (+ (indexed-stream-end stream) 1)))))))
 
 (defun indexed-string-stream (str)
   (make-indexed-stream
@@ -55,11 +72,18 @@
 
 (defun get-next-chunk (indexed-stream)
   (let ((stream (indexed-stream-stream indexed-stream))) 
-    (if (null stream) 
-        *stream-end*
-        (let ((next (read-stream-chunk (indexed-stream-end indexed-stream) stream)))
-          (setf (indexed-stream-next indexed-stream) next)
-          next))))
+    (cond ((null stream) 
+           *stream-end*)
+          ((indexed-stream-next indexed-stream) 
+           (indexed-stream-next indexed-stream))
+          (t (let ((next (read-stream-chunk
+                          (indexed-stream-end indexed-stream) 
+                          stream
+                          (- 
+                           (indexed-stream-end indexed-stream)
+                           (indexed-stream-start indexed-stream)))))
+               (setf (indexed-stream-next indexed-stream) next)
+               next)))))
 
 (defun get-entry (indexed-stream i)
   (declare ((unsigned-byte 32) i) (optimize (speed 3)))
@@ -77,8 +101,8 @@
                   (get-next-chunk indexed-stream))
                 (get-entry (indexed-stream-next indexed-stream) i))))))
 
-(defun indexed-file-stream (file-stream)
-  (read-stream-chunk 0 file-stream))
+(defun indexed-file-stream (file-stream &key (buffer-size 100000))
+  (read-stream-chunk 0 file-stream buffer-size))
 
 (defparameter *empty-chunk* 
   (make-indexed-stream
