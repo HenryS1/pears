@@ -10,7 +10,16 @@
    :indexed-stream-next
    :set-indexed-stream-next
    :new-indexed-stream
-   :get-entry))
+   :get-entry
+   :take-while
+   *stream-end*
+   *failure*
+   :apply-parser
+   :one
+   :many
+   :many1
+   :repeated
+   :repeated1))
 
 (in-package :pears)
 
@@ -72,8 +81,7 @@
 
 (defun get-next-chunk (indexed-stream)
   (let ((stream (indexed-stream-stream indexed-stream))) 
-    (cond ((null stream) 
-           *stream-end*)
+    (cond ((null stream) *stream-end*)
           ((indexed-stream-next indexed-stream) 
            (indexed-stream-next indexed-stream))
           (t (let ((next (read-stream-chunk
@@ -97,9 +105,8 @@
              ((< (indexed-stream-end indexed-stream)
                  (+ (indexed-stream-start indexed-stream)
                     (length (indexed-stream-buffer indexed-stream)))) (values nil *stream-end*))
-             (t (when (null (indexed-stream-next indexed-stream))
-                  (get-next-chunk indexed-stream))
-                (get-entry (indexed-stream-next indexed-stream) i))))))
+             (t (get-entry (or (indexed-stream-next indexed-stream)
+                               (get-next-chunk indexed-stream)) i))))))
 
 (defun indexed-file-stream (file-stream &key (buffer-size 100000))
   (read-stream-chunk 0 file-stream buffer-size))
