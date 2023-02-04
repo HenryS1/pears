@@ -19,7 +19,8 @@
    :many
    :many1
    :repeated
-   :repeated1))
+   :repeated1
+   :sep-by))
 
 (in-package :pears)
 
@@ -207,7 +208,7 @@
                      `(multiple-value-bind (,next-result ,next-stream ,next-i)
                           (funcall ,cur-parser ,cur-stream ,cur-i)
                         (etypecase ,next-result 
-                          (failure (values ,next-result ,next-i))
+                          (failure (values ,next-result ,next-stream))
                           (t ,(if (string= (symbol-name result-binding) "_")
                                   (nest (cdr parser-bindings) next-stream next-i value-form)
                                   `(let ((,result-binding ,next-result))

@@ -176,3 +176,32 @@
           (ok (equalp f pears:*failure*))
           (ok (equalp next-i 0)))))))
 
+(deftest sep-by-test 
+  (testing "sep-by returns a list of elements separated by a separator"
+    (with-input-from-string (s "aa,bb,cc")
+      (let ((ind-str (new-indexed-stream s 2)))
+        (multiple-value-bind (result next-s next-i)
+            (pears:apply-parser (pears:sep-by (pears:many1 #'alpha-char-p) 
+                                              (pears:one (lambda (c) (char= c #\,))))
+                                ind-str 0)
+          (ok (equalp result (list "aa" "bb" "cc")))
+          (ok (equalp next-i 8))))))
+  (testing "sep-by fails when the value parser doesn't match any input"
+    (with-input-from-string (s ",aa,bb,cc")
+      (let ((ind-str (new-indexed-stream s 2)))
+        (multiple-value-bind (f next-i)
+            (pears:apply-parser (pears:sep-by (pears:many1 #'alpha-char-p)
+                                              (pears:one (lambda (c) (char= c #\,))))
+                                ind-str 0)
+          (ok (equalp f pears:*failure*))
+          (ok (equalp next-i 0))))))
+  (testing "return matching value input when only the separator parser doesn't match"
+    (with-input-from-string (s "aa bb cc")
+      (let ((ind-str (new-indexed-stream s 2)))
+        (multiple-value-bind (result next-s next-i)
+            (pears:apply-parser (pears:sep-by (pears:many1 #'alpha-char-p)
+                                              (pears:one (lambda (c) (char= c #\,))))
+                                ind-str 0)
+          (ok (equalp result (list "aa")))
+          (ok (equalp next-i 2)))))))
+
