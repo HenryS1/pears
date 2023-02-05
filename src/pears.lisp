@@ -354,9 +354,8 @@
                    for (entry next-stream) = (multiple-value-list (get-entry stream cur-i))
                    while (and (not (eq next-stream *stream-end*))
                               (funcall (the function predicate) entry) (< cnt n))
-                   collect entry into results
                    finally (return (if (= cnt n)
-                                       (values next-stream results i)
+                                       (values (stream-subseq stream i cur-i) next-stream cur-i)
                                        (values *failure* i)))))))
 
 (defun digits-to-int (digits)
@@ -409,7 +408,7 @@
   (sequential (_ (char1 #\\))
               (_ (char1 #\u))
               (cs (manyn #'hexp 4))
-              (cons #\\ (cons #\u cs))))
+              (code-char (parse-integer cs :radix 16))))
 
 (defun escaped-character ()
   (orp 
@@ -423,17 +422,17 @@
                        (char1 #\n)
                        (char1 #\r)
                        (char1 #\t)))
-               (list #\\ c))))
+               c)))
 
 (defun json-string ()
   (sequential (_ (char1 #\"))
-              (cs (fmap (lambda (ls) (apply #'append ls))
-                        (repeated (orp (many1 (lambda (c) 
-                                                (and (not (char= c #\\))
-                                                     (not (char= c #\")))))
-                                       (escaped-character)))))
+              (cs (repeated (orp (many1 (lambda (c) 
+                                          (and (not (char= c #\\))
+                                               (not (char= c #\")))))
+                                 (unicode-char)
+                                 (escaped-character))))              
               (_ (char1 #\"))
-              (coerce cs 'string)))
+              (format nil "~{~a~}" cs)))
 
 (defun json-key-value ()
   (sequential (_ (ignore-whitespace))
