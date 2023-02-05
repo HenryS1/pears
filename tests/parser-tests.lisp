@@ -21,7 +21,7 @@
                             (- (indexed-stream-end ind-str)
                                (indexed-stream-start ind-str)))))
         (ok (= (indexed-stream-start ind-str) 1))
-        (ok (= (indexed-stream-end ind-str)) 5)))))
+        (ok (= (indexed-stream-end ind-str) 5))))))
 
 (deftest stream-subseq-test
   (testing "stream-subseq subseqs contiguous portion of the underlying buffer"
