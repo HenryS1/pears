@@ -9,15 +9,10 @@
   :description "A monadic parser for Common Lisp"
   :in-order-to ((test-op (test-op "pears/tests"))))
 
-;; (defsystem "pears/tests"
-;;   :depends-on ("rove"
-;;                "salmon")
-;;   :components ((:module "tests"
-;;                 :components
-;;                 ((:file "maybe-tests")
-;;                  (:file "try-tests")
-;;                  (:file "monad-tests")
-;;                  (:file "mlist-tests")
-;;                  (:file "mvector-tests")
-;;                  (:file "either-tests"))))
-;;   :perform (test-op (o c) (symbol-call :rove '#:run c)))
+(defsystem "pears/tests"
+  :depends-on ("rove"
+               "salmon")
+  :components ((:module "tests"
+                :components
+                ((:file "parser-tests"))))
+  :perform (test-op (o c) (symbol-call :rove '#:run c)))

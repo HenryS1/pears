@@ -1,0 +1,8 @@
+("quicklisp" .
+ (:class qlot/source/dist:source-dist
+  :initargs (:distribution "http://beta.quicklisp.org/dist/quicklisp.txt" :%version :latest)
+  :version "2022-11-07"))
+("salmon" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/HenryS1/salmon.git" :branch "master")
+  :version "git-742de294b62edbeb67c9412867d62d2306aa029e"))
