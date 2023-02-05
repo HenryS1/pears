@@ -1,5 +1,5 @@
 (defpackage :pears
-  (:use :cl :monad)
+  (:use :cl)
   (:export
    :make-indexed-stream 
    :stream-subseq
