@@ -1,4 +1,4 @@
-(defpackage :pears
+aa(defpackage :pears
   (:use :cl :monad)
   (:export
    :make-indexed-stream 
@@ -10,6 +10,7 @@
    :indexed-stream-next
    :set-indexed-stream-next
    :new-indexed-stream
+   :indexed-string-stream
    :get-entry
    :take-while
    *stream-end*
