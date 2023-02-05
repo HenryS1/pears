@@ -1,5 +1,5 @@
 (defpackage json-benchmark
-  (:use :cl :rove :pears))
+  (:use :cl :pears))
 
 (in-package :json-benchmark)
 
@@ -51,7 +51,6 @@
               (cs (repeated (orp (many1 (lambda (c) 
                                           (and (not (char= c #\\))
                                                (not (char= c #\")))))
-                                 (unicode-char)
                                  (escaped-character))))              
               (_ (char1 #\"))
               (format nil "~{~a~}" cs)))
@@ -112,3 +111,4 @@
               (let* ((n (if f (+ (car f) int) int))
                      (with-exp (if e (funcall (car e) n) n)))
                 (if negate (- with-exp) with-exp))))
+

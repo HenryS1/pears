@@ -186,14 +186,15 @@
                                 ind-str 0)
           (ok (equalp result (list "aa" "bb" "cc")))
           (ok (equalp next-i 8))))))
-  (testing "sep-by fails when the value parser doesn't match any input"
+  (testing "sep-by returns an empty list when the value parser doesn't match any input"
     (with-input-from-string (s ",aa,bb,cc")
       (let ((ind-str (new-indexed-stream s 2)))
-        (multiple-value-bind (f next-i)
+        (multiple-value-bind (result next-s next-i)
             (pears:apply-parser (pears:sep-by (pears:many1 #'alpha-char-p)
                                               (pears:one (lambda (c) (char= c #\,))))
                                 ind-str 0)
-          (ok (equalp f pears:*failure*))
+          (ok (equalp result nil))
+          (ok (equalp next-s ind-str))
           (ok (equalp next-i 0))))))
   (testing "return matching value input when only the separator parser doesn't match"
     (with-input-from-string (s "aa bb cc")

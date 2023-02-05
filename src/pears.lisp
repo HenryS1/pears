@@ -1,8 +1,10 @@
-aa(defpackage :pears
+(defpackage :pears
   (:use :cl :monad)
   (:export
    :make-indexed-stream 
    :stream-subseq
+   :sequential
+   :orp
    :read-stream-chunk
    :indexed-stream-buffer
    :indexed-stream-start
@@ -314,9 +316,9 @@ aa(defpackage :pears
   (let ((sep-parser (sequential (_ sep-parser)
                                 (v value-parser)
                                 v)))
-    (sequential (fst value-parser)
-                (rest (repeated sep-parser))
-                (cons fst rest))))
+    (fmap #'car (optional (sequential (fst value-parser)
+                                      (rest (repeated sep-parser))
+                                      (cons fst rest))))))
 
 (defun discard (pred)
   (new-parser (lambda (stream i)
