@@ -1,0 +1,46 @@
+[[https://github.com/HenryS1/pears/tree/master][https://github.com/HenryS1/pears/actions/workflows/ci.yaml/badge.svg]]
+
+* Pears
+
+A combinator parsing library for Common Lisp
+
+** Motivation 
+
+User input and structured data needs to be converted into your domain
+model to be used. Regular expressions are popular, but they have
+serious limitations for intrepreting structured input. A simple
+example is that a regular expressiong can't match balanced parenthese.
+Parsers can consume complicated user input, but handwritten parsers
+can be complicated and aspects such as consuming input and
+backtracking obscure parsing logic. 
+
+Combinator parsers address the complexity of parsing by abstracting
+backtracking, buffering and input processing. A good example of a
+combinator parser is [[https://github.com/mrkkrp/megaparsec][Megaparsec]] from Haskell. This library provides a
+similar parsing facility for Common Lisp.
+
+** Examples
+
+The two main operators for creating parsers are ~orp~ and
+~sequential~. The ~orp~ form tries each of the provided parsers until
+one matches, backtracking on failure. The ~sequential~ form creates a
+parser which applies a list of parsers to the input binding each
+parsed result to a different value. The final form in ~sequential~ is
+the value returned by the parser. If any parser in the list supplied
+to ~sequential~ fails then the parser fails.
+
+The file ~tests/json-bechmark.lisp~ defines a json parser. Here is the
+top level definition of how to parse a json value. It has a clear
+correspondence to the definition of a json value in the [[https://www.json.org/json-en.html][json spec]].
+
+#+begin_src lisp
+  (defun json ()
+    (sequential (_ (ignore-whitespace))
+                (v (orp (json-string)
+                        (json-number)
+                        (json-object)
+                        (json-array)
+                        (json-boolean)
+                        (json-null)))
+                v))
+#+end_src

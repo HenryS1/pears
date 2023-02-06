@@ -33,7 +33,9 @@
    :optional
    :manyn
    :*positive-int*
-   :*non-negative-int*))
+   :*non-negative-int*
+   :parse-string
+   :parse-stream))
 
 (in-package :pears)
 
@@ -388,3 +390,17 @@
                                              (digit-char-p fst))))
 
 (defparameter *non-negative-int* (orp (sequential (_ (char1 #\0)) 0) *positive-int*))
+
+(defun parse-string (parser string)
+  (let ((indexed-stream (indexed-string-stream string)))
+    (multiple-value-bind (result next-stream next-index)
+        (apply-parser parser indexed-stream 0)
+      (declare (ignore next-stream next-index))
+      result)))
+
+(defun parse-stream (parser stream)
+  (let ((indexed-stream (new-indexed-stream stream 100000)))
+    (multiple-value-bind (result next-stream next-index)
+        (apply-parser parser indexed-stream 0)
+      (declare (ignore next-stream next-index))
+      result)))
