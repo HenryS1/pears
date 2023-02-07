@@ -78,6 +78,11 @@
               (_ (char1 #\}))
               (alist-to-hash-table es)))
 
+(defun digits-to-int (digits)
+  (loop for d across digits
+        for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
+        finally (return n)))
+
 (defun json-array ()
   (sequential (_ (char1 #\[))
               (is (sep-by (sequential (v (json)) (_ (ignore-whitespace)) v) (char1 #\,)))
@@ -112,3 +117,7 @@
                      (with-exp (if e (funcall (car e) n) n)))
                 (if negate (- with-exp) with-exp))))
 
+(defun run-benchmark ()
+  (let ((directory (asdf:system-source-directory :pears))) 
+    (time (with-open-file (file (format nil "~a/tests/large_file.json" directory))
+       (parse-stream (json) file)))))

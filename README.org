@@ -29,6 +29,77 @@ parsed result to a different value. The final form in ~sequential~ is
 the value returned by the parser. If any parser in the list supplied
 to ~sequential~ fails then the parser fails.
 
-** Example
+** Creating a parser
 
-The file ~tests/json-bechmark.lisp~ defines a json parser.
+A parser is most easily created by combining the builtin combinators.
+
+*** one
+
+Create a parser which matches exactly one stream element satisfying
+the provided predicate.
+
+#+begin_src lisp
+  ;; (stream-element -> bool) -> parser
+  (one (char= #\a)) ;; matches one 'a' character
+#+end_src
+
+*** many
+
+Create a parser which matches zero or more stream elements satisfying
+the provided predicate.
+
+#+begin_src lisp
+  ;; (stream-element -> bool) -> parser
+  (many #'digit-char-p) ;; matches zero or more digits
+#+end_src
+
+*** many1 
+
+Like many but requires at least one match to succeed. Returns a
+sequence of matching elements from the input stream.
+
+#+begin_src lisp
+  ;; (stream-element -> bool) -> parser
+  (many1 #'alpha-char-p) ;; matches a non-empty sequence of alphabetical characters
+#+end_src
+
+*** sequential
+
+Syntactic sugar for a form which applies the listed parsers to the
+input binding the parsed results to variables. Returns the last
+provided form as the parsed result. Works similarly to a let binding.
+
+#+begin_src lisp
+  (sequential (a (one #'alpha-char-p))
+              (b (one #'digit-char-p))
+              (list a b))
+  ;; parses an alphbetical character and then a digit and returns a list
+  ;; containing them
+#+end_src
+
+*** orp 
+
+Syntactic sugar for a form which tries to match each of the provided
+parsers. If one fails this backtracks and tries the next.
+
+#+begin_src lisp
+  (orp (one #'alpha-char-p)
+       (lambda (c) (char= c #\*)))
+  ;; parses an alphabetical character or an asterisk
+#+end_src
+
+*** repeated
+
+Repeatedly apply a parser returning a list of zero or more matches.
+
+#+begin_src lisp
+  ;; parser -> parser
+  (repeated (sequential (a (one #'alpha-char-p))
+                        (b (one #'digit-char-p))
+                        (list a b)))
+  ;; repeatedly parses an alphabetical character followed by a digit 
+  ;; returning a list of parsed results
+#+end_src
+
+
+

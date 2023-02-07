@@ -35,7 +35,8 @@
    :*positive-int*
    :*non-negative-int*
    :parse-string
-   :parse-stream))
+   :parse-stream
+   :buffer-input))
 
 (in-package :pears)
 
@@ -265,6 +266,7 @@
                        (lambda (,init-stream ,init-i) ,parse-attempts))))))
 
 (defun one (pred) 
+  "Match one stream element satisfying the supplied predicate"
   (new-parser (lambda (stream i)
                 (declare (fixnum i))
                 (multiple-value-bind (entry next-stream) (get-entry stream i)
@@ -373,11 +375,6 @@
                                        (values (stream-subseq stream i cur-i) next-stream cur-i)
                                        (values *failure* i)))))))
 
-(defun digits-to-int (digits)
-  (loop for d across digits
-        for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
-        finally (return n)))
-
 (defun non-zero-digit ()
   (one (lambda (c) (and (digit-char-p c) (char/= c #\0)))))
 
@@ -404,3 +401,8 @@
         (apply-parser parser indexed-stream 0)
       (declare (ignore next-stream next-index))
       result)))
+
+(defun buffer-input (input)
+  (etypecase input
+    (string (indexed-string-stream input))
+    (stream (new-indexed-stream input 100000))))
