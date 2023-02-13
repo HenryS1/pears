@@ -378,6 +378,11 @@
 (defun non-zero-digit ()
   (one (lambda (c) (and (digit-char-p c) (char/= c #\0)))))
 
+(defun digits-to-int (digits)
+  (loop for d across digits
+        for n = (digit-char-p d) then (+ (* n 10) (digit-char-p d))
+        finally (return n)))
+
 (defparameter *positive-int* (sequential (fst (non-zero-digit))
                                          (rest (many #'digit-char-p))
                                          (if (> (length rest) 0)
