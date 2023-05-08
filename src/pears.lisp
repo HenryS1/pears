@@ -170,29 +170,6 @@
 (defun apply-parser (p strm i)
   (funcall (the function (parser-f p)) strm i))
 
-;; (defun transform-sep-stream (parser sep-parser stream)
-;;   (labels ((rec (i)
-;;              (and stream
-;;                   (multiple-value-bind (result next-i) (apply-parser parser stream 0)
-;;                     (if (eq result *failure*)
-;;                         (multiple-value-bind (sep-result sep-i) (apply-parser sep-parser stream next-i)
-;;                           (if (eq sep-result *failure*)
-;;                               nil
-;;                               (transform-sep-stream parser sep-parser stream sep-i)))
-;;                         (lazy-cons result (transform-sep-stream parser sep-parser next-i))))))) ))
-
-;; (defun transform-stream (parser stream)
-;;   (and stream 
-;;        (multiple-value-bind (result next-stream) (apply-parser parser stream)
-;;          (if (eq result *failure*)
-;;              *failure*
-;;              (transform-stream parser next-stream)))))
-
-;; (defun fold-stream (f stream val)
-;;   (if (null stream)
-;;       val
-;;       (fold-stream f (tail stream) (funcall f val ( stream)))))
-
 (defmethod fmap (f (p parser))
   (let ((p-f (parser-f p)))
    (new-parser (lambda (strm i) 

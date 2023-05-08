@@ -73,10 +73,10 @@
   (sequential (_ (ignore-whitespace))
               (_ (char1 #\{))
               (_ (ignore-whitespace))
-              (es (sep-by (json-key-value) (char1 #\,)))
+              (keys-and-values (sep-by (json-key-value) (char1 #\,)))
               (_ (ignore-whitespace))
               (_ (char1 #\}))
-              (alist-to-hash-table es)))
+              (alist-to-hash-table keys-and-values)))
 
 (defun digits-to-int (digits)
   (loop for d across digits
