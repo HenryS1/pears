@@ -89,11 +89,11 @@ parsers. If one fails this backtracks and tries the next.
 #+end_src
 
 *** repeated
+**** parser -> parser
 
 Repeatedly apply a parser returning a list of zero or more matches.
 
 #+begin_src lisp
-  ;; parser -> parser
   (repeated (sequential (a (one #'alpha-char-p))
                         (b (one #'digit-char-p))
                         (list a b)))
@@ -101,5 +101,19 @@ Repeatedly apply a parser returning a list of zero or more matches.
   ;; returning a list of parsed results
 #+end_src
 
+*** repeated1
+**** parser -> parser
 
+Repeatedly apply a parser returning a list of one or more matches.
+Similar to repeated, but fails if there isn't at least one match for
+the parser.
 
+*** sep-by
+**** (parser, parser) -> parser
+
+Use the first parser to parse values and the second parser to parse a
+separator. Collect the values into a list.
+
+#+begin_src lisp
+  (sep-by (many1 #'alpha-char-p) (char1 #\,))
+#+end_src
