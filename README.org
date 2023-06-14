@@ -34,33 +34,43 @@ to ~sequential~ fails then the parser fails.
 A parser is most easily created by combining the builtin combinators.
 
 *** one
+**** (stream-element -> bool) -> parser
 
 Create a parser which matches exactly one stream element satisfying
 the provided predicate.
 
 #+begin_src lisp
-  ;; (stream-element -> bool) -> parser
   (one (char= #\a)) ;; matches one 'a' character
 #+end_src
 
 *** many
+**** (stream-element -> bool) -> parser
 
 Create a parser which matches zero or more stream elements satisfying
 the provided predicate.
 
 #+begin_src lisp
-  ;; (stream-element -> bool) -> parser
   (many #'digit-char-p) ;; matches zero or more digits
 #+end_src
 
 *** many1 
+**** (stream-element -> bool) -> parser
 
 Like many but requires at least one match to succeed. Returns a
 sequence of matching elements from the input stream.
 
 #+begin_src lisp
-  ;; (stream-element -> bool) -> parser
   (many1 #'alpha-char-p) ;; matches a non-empty sequence of alphabetical characters
+#+end_src
+
+*** manyn
+**** (stream-elemnnt -> bool) -> parser
+
+Creates a parser which expects a predicate to apply to n successive
+elements from the input stream.
+
+#+begin_src lisp
+  (manyn #'alpha-char-p 4)
 #+end_src
 
 *** sequential
@@ -78,6 +88,7 @@ provided form as the parsed result. Works similarly to a let binding.
 #+end_src
 
 *** orp 
+**** parser* -> parser
 
 Syntactic sugar for a form which tries to match each of the provided
 parsers. If one fails this backtracks and tries the next.
@@ -117,3 +128,36 @@ separator. Collect the values into a list.
 #+begin_src lisp
   (sep-by (many1 #'alpha-char-p) (char1 #\,))
 #+end_src
+
+*** discard
+**** (stream-element -> bool) -> parser
+
+Create a parser that discards stream-elements matching the provided predicate.
+
+#+begin_src lisp
+  (discard #'digit-char-p)
+#+end_src
+
+*** ignore whitespace
+**** parser
+
+A parser that discards whitespace
+
+*** seq
+**** stream-element* -> parser
+
+Parse the provided sequence of stream elements
+
+#+begin_src lisp
+  (seq "true")
+#+end_src
+
+*** optional
+**** parser -> parser
+
+Applies the provided parser zero or one times to the input.
+
+#+begin_src
+  (optional (char1 #\-))
+#+end_src
+
