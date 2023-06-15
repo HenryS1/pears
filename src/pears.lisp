@@ -5,6 +5,8 @@
    :stream-subseq
    :sequential
    :orp
+   :parse-file
+   :lines
    :read-stream-chunk
    :indexed-stream-buffer
    :indexed-stream-start
@@ -36,7 +38,8 @@
    :*non-negative-int*
    :parse-string
    :parse-stream
-   :buffer-input))
+   :buffer-input
+   :parse-file))
 
 (in-package :pears)
 
@@ -255,8 +258,10 @@
 
 (defun many (pred)
   (new-parser (lambda (stream i) 
-                (multiple-value-bind (next-stream end) (take-while pred stream i)
-                  (values (stream-subseq stream i end) next-stream end)))))
+                (if (equal *stream-end* stream)
+                    (values *failure* i)
+                    (multiple-value-bind (next-stream end) (take-while pred stream i)
+                      (values (stream-subseq stream i end) next-stream end))))))
 
 (defun many1 (pred)
   (new-parser (lambda (stream i)
@@ -271,11 +276,12 @@
   (let ((p-f (parser-f parser)))
     (declare (function p-f))
     (new-parser (lambda (stream i)
-                  (loop for end-prev = i then end
+                  (loop while (not (equal stream *stream-end*))
+                        for end-prev = i then end
                         for stream-prev = stream then next-stream
                         for (result next-stream end) = (multiple-value-list
                                                         (funcall p-f stream i))
-                        then (multiple-value-list (funcall p-f next-stream end))
+                          then (multiple-value-list (funcall p-f next-stream end))
                         while (etypecase result (failure nil) (t t))
                         collect result into results
                         finally (return (values results stream-prev end-prev)))))))
@@ -294,11 +300,11 @@
                                        (values results stream-prev end-prev)))))))
 
 (defun sep-by (value-parser sep-parser)
-  (let ((sep-parser (sequential (_ sep-parser)
+  (let ((sep-and-value-parser (sequential (_ sep-parser)
                                 (v value-parser)
                                 v)))
     (fmap #'car (optional (sequential (fst value-parser)
-                                      (rest (repeated sep-parser))
+                                      (rest (repeated sep-and-value-parser))
                                       (cons fst rest))))))
 
 (defun discard (pred)
@@ -376,6 +382,14 @@
         (apply-parser parser indexed-stream 0)
       (declare (ignore next-stream next-index))
       result)))
+
+(defun parse-file (path parser)
+  (with-open-file (f path)
+    (when f
+      (parse-stream parser f))))
+
+(defun lines (line-parser)
+  (sep-by line-parser (many #'newlinep)))
 
 (defun parse-stream (parser stream)
   (let ((indexed-stream (new-indexed-stream stream 100000)))
