@@ -7,11 +7,14 @@
    :orp
    :parse-file
    :lines
+   :fmap
+   :flatmap
    :read-stream-chunk
    :indexed-stream-buffer
    :indexed-stream-start
    :indexed-stream-end
    :indexed-stream-next
+   :parse-sequence
    :set-indexed-stream-next
    :new-indexed-stream
    :indexed-string-stream
@@ -34,6 +37,7 @@
    :seq
    :optional
    :manyn
+   :anyn
    :*positive-int*
    :*non-negative-int*
    :parse-string
@@ -54,7 +58,8 @@
   (next nil :type t))
 
 (defun read-stream-chunk (start stream buffer-size)
-  (let ((buffer (make-array buffer-size :element-type 'character :adjustable nil)))
+  (let ((buffer (make-array buffer-size :element-type (stream-element-type stream)
+                                        :adjustable nil)))
     (make-indexed-stream 
      :start start 
      :buffer buffer 
@@ -98,6 +103,15 @@
    :end (length str)
    :stream nil
    :next nil))
+
+(defun indexed-sequence-stream (l)
+  (let ((as-vector (coerce l 'vector)))
+    (make-indexed-stream
+     :start 0
+     :buffer as-vector
+     :end (length as-vector)
+     :stream nil
+     :next nil)))
 
 (defun get-next-chunk (indexed-stream)
   (let ((stream (indexed-stream-stream indexed-stream))) 
@@ -358,6 +372,9 @@
                                        (values (stream-subseq stream i cur-i) next-stream cur-i)
                                        (values *failure* i)))))))
 
+(defun anyn (n)
+  (manyn (lambda (e) (declare (ignore e)) t) n))
+
 (defun non-zero-digit ()
   (one (lambda (c) (and (digit-char-p c) (char/= c #\0)))))
 
@@ -397,6 +414,13 @@
         (apply-parser parser indexed-stream 0)
       (declare (ignore next-stream next-index))
       result)))
+
+(defun parse-sequence (l parser &key (output-type nil))
+  (let* ((indexed-stream (indexed-sequence-stream l))
+         (result (apply-parser parser indexed-stream 0)))
+    (if output-type 
+        (coerce result output-type)
+        result)))
 
 (defun buffer-input (input)
   (etypecase input
